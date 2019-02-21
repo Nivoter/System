@@ -127,7 +127,7 @@ void lldTurnForCertainDegreeRight(int16_t degrees)
     //chprintf(((BaseSequentialStream *)&SD7), "%d    ",temp_value);
     //chprintf(((BaseSequentialStream *)&SD7), "%d\r\n",turn_untill);
 
-    while (error > 30)
+    while (error > 60)
     {
         error = turn_untill - value;
         P = CLIP_VALUE(error*kp,0,100);
