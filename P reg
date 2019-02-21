@@ -11,9 +11,11 @@
 #define PWMDriver1 &PWMD1
 #define PWM1_CHANNEL_P9 0
 #define PWM1_CHANNEL_P11 1
+#define TURN_REAL_MAX 4095
 #define TURN_MAX 4060
 #define TURN_MIN 30
-#define kp 0.3
+#define kp 0.29
+#define K_DEG 16.94
 
 #define CLIP_VALUE(x, min, max) ((x) < (min) ? (min) : (x) > (max) ? (max) : (x))
 
@@ -115,24 +117,23 @@ void lldSetDirectionMotor(bool direction, int32_t speed_atm)
         lldSetPowerMotor((-speed_atm));
     }
 }
-
 void lldTurnForCertainDegreeRight(int16_t degrees)
 {
-    uint16_t temp_value = value;
-    uint16_t turn_untill = temp_value + 16.94*degrees;
-    uint16_t error = 20000;
+    uint16_t turn_untill = value + 16.94*degrees;
+    int16_t error = 61;
     uint32_t P = 0;
 
     turn_untill = CLIP_VALUE(turn_untill,TURN_MIN,TURN_MAX);
-    chprintf(((BaseSequentialStream *)&SD7), "%d\r\n",temp_value);
-    chprintf(((BaseSequentialStream *)&SD7), "%d\r\n",turn_untill);
+    //chprintf(((BaseSequentialStream *)&SD7), "%d    ",temp_value);
+    //chprintf(((BaseSequentialStream *)&SD7), "%d\r\n",turn_untill);
 
-    while (error > 60)
+    while (error > 30)
     {
-        error = turn_untill - CLIP_VALUE(value,TURN_MIN,TURN_MAX);
+        error = turn_untill - value;
         P = CLIP_VALUE(error*kp,0,100);
         lldSetPowerMotor(P);
-        chprintf(((BaseSequentialStream *)&SD7), "|%d    ",error);
+//        chprintf(((BaseSequentialStream *)&SD7), "|%d    ",value);
+//        chprintf(((BaseSequentialStream *)&SD7), "|%d\r\n",error);
         chThdSleepMilliseconds(100);
     }
     lldSetPowerMotor(0);
@@ -141,19 +142,18 @@ void lldTurnForCertainDegreeRight(int16_t degrees)
 void lldTurnForCertainDegreeLeft(int16_t degrees)
 {
     uint16_t temp_value = value;
-    uint16_t error = 20000;
+    int16_t error = 61;
     uint32_t P = 0;
-
     uint16_t turn_untill = temp_value - 16.94*degrees;
-    turn_untill = CLIP_VALUE(turn_untill,TURN_MIN,TURN_MAX);
-    chprintf(((BaseSequentialStream *)&SD7), "%d\r\n",temp_value);
-    chprintf(((BaseSequentialStream *)&SD7), "%d\r\n",turn_untill);
-    lldSetPowerMotor(-100);
+    turn_untill = CLIP_VALUE(turn_untill,TURN_MIN,temp_value);
+//    chprintf(((BaseSequentialStream *)&SD7), "%d    ",temp_value);
+//    chprintf(((BaseSequentialStream *)&SD7), "%d\r\n",turn_untill);
     while (error > 60)
     {
-        error = CLIP_VALUE(value,TURN_MIN,TURN_MAX) - turn_untill;
+        error = value - turn_untill;
         P = CLIP_VALUE(error*kp,0,100);
-        chprintf(((BaseSequentialStream *)&SD7), "%d    ",error);
+//        chprintf(((BaseSequentialStream *)&SD7), "i%d    ",value);
+//                chprintf(((BaseSequentialStream *)&SD7), "i%d\r\n",error);
         lldSetPowerMotor(-P);
         chThdSleepMilliseconds(100);
     }
@@ -205,9 +205,9 @@ int main(void)
 
 //        chprintf(((BaseSequentialStream *)&SD7), "%d    ",test);
 //            chprintf(((BaseSequentialStream *)&SD7), "%d\r\n",value);
-        lldTurnForCertainDegreeRight(90);
+        lldTurnForCertainDegreeRight(360);
                     chThdSleepMilliseconds(500);
-                    lldTurnForCertainDegreeLeft(90);
+                    lldTurnForCertainDegreeLeft(360);
             chThdSleepMilliseconds(500);
             chprintf(((BaseSequentialStream *)&SD7), "lalka");
 //            pwmStop(&PWMD1);
