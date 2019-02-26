@@ -1,0 +1,264 @@
+#include <ch.h>
+#include <hal.h>
+#include <chprintf.h>
+
+#define ADC1_NUM_CHANNELS 1
+#define ADC1_BUF_DEPTH 1
+#define PWM1_P9 PAL_LINE( GPIOE, 9 )
+#define PWM1_P11 PAL_LINE( GPIOE, 11 )
+#define PWM1_MODE_P9 PAL_MODE_ALTERNATE(1)
+#define PWM1_MODE_P11 PAL_MODE_ALTERNATE(1)
+#define PWMDriver1 &PWMD1
+#define PWM1_CHANNEL_P9 0
+#define PWM1_CHANNEL_P11 1
+#define TURN_REAL_MAX 4095
+#define TURN_MAX 4060
+#define TURN_MIN 30
+#define kp 0.4
+#define kd 1
+#define ki 0.0017
+#define K_DEG 16.94
+
+
+#define CLIP_VALUE(x, min, max) ((x) < (min) ? (min) : (x) > (max) ? (max) : (x))
+
+static adcsample_t samples1[ADC1_NUM_CHANNELS * ADC1_BUF_DEPTH];
+
+static const GPTConfig gpt4cfg1 = {
+                                   .frequency = 100000,
+                                   .callback = NULL,
+                                   .cr2 = TIM_CR2_MMS_1,
+                                   .dier = 0U
+};
+
+uint16_t value = 0;
+
+static void adccallback(ADCDriver *adcp, adcsample_t *buffer, size_t n)
+{
+  (void)adcp;
+  value = buffer[0];
+  (void)n;
+
+}
+
+static adcerrorcallback (ADCDriver *adcp, adcerror_t err)
+{
+  (void)adcp;
+  (void)err;
+}
+
+static const ADCConversionGroup adcgrpcfg1 =
+{
+   .circular = true,
+   .num_channels = ADC1_NUM_CHANNELS,
+   .end_cb = adccallback,
+   .error_cb = adcerrorcallback,
+   .cr1 = 0,
+   .cr2 = ADC_CR2_EXTEN_RISING | ADC_CR2_EXTSEL_SRC(0b1100),
+   .smpr1 = ADC_SMPR1_SMP_AN10(ADC_SAMPLE_144),
+   .smpr2 = 0,
+   .sqr1 = ADC_SQR1_NUM_CH(ADC1_NUM_CHANNELS),
+   .sqr2 = 0,
+   .sqr3 = ADC_SQR3_SQ1_N(ADC_CHANNEL_IN10)
+};
+
+
+static const SerialConfig letsgo= {
+                                   .speed =115200,
+                                   .cr1 = 0,
+                                   .cr2 = 0,
+                                   .cr3 = 0,
+};
+
+
+PWMConfig pwm1conf = {
+    .frequency = 500000,
+    .period    = 10000,
+    .callback  = NULL,
+    .channels  = {
+                  {.mode = PWM_OUTPUT_ACTIVE_HIGH, .callback = NULL}, // k wtyke
+                  {.mode = PWM_OUTPUT_ACTIVE_HIGH, .callback = NULL}, // ot wtuke
+                  {.mode = PWM_OUTPUT_DISABLED,    .callback = NULL},
+                  {.mode = PWM_OUTPUT_DISABLED,    .callback = NULL}
+                  },
+    .cr2        = 0,
+    .dier       = 0
+};
+
+void lldMotorInit(void)
+{
+    palSetLineMode( PWM1_P9,  PWM1_MODE_P9  );
+    palSetLineMode( PWM1_P11,  PWM1_MODE_P11 );
+}
+
+void lldSetPowerMotor(int32_t powerPrct)
+{
+    if(powerPrct == 0)
+    {
+        pwmStop(PWMDriver1);
+    }
+    else if(powerPrct > 0 && powerPrct <= 100)
+    {
+        pwmStart( PWMDriver1, &pwm1conf );
+        pwmEnableChannel( PWMDriver1, PWM1_CHANNEL_P9, powerPrct*100 );
+    }
+    else if(powerPrct < 0 && powerPrct >= -100)
+    {
+        pwmStart( PWMDriver1, &pwm1conf );
+        pwmEnableChannel( PWMDriver1, PWM1_CHANNEL_P11, -(powerPrct*100) );
+    }
+}
+
+void lldSetDirectionMotor(bool direction, int32_t speed_atm)
+{
+    if(direction == 0)
+    {
+        lldSetPowerMotor(speed_atm);
+    }
+    else if(direction == 1)
+    {
+        lldSetPowerMotor((-speed_atm));
+    }
+}
+void lldTurnForCertainDegreeRight(int16_t degrees)
+{
+    uint16_t turn_untill = value + 16.94*degrees;
+    int16_t error = 61;
+    int16_t errorD = 0;
+    int32_t P = 0;
+    int32_t PDR = 0;
+    int32_t D = 0;
+    int32_t I = 0;
+    int kva = 0;
+    turn_untill = CLIP_VALUE(turn_untill,TURN_MIN,TURN_MAX);
+    //chprintf(((BaseSequentialStream *)&SD7), "%d    ",temp_value);
+    //chprintf(((BaseSequentialStream *)&SD7), "%d\r\n",turn_untill);
+
+    while (error > 60)
+    {
+        error = turn_untill - value;
+        P = CLIP_VALUE(error*kp,0,100);
+        D = (error-errorD)*kd;
+        PDR = P+D;
+
+        //I part
+
+        I += error;
+        PDR = PDR+I*ki;
+        kva = I*ki;
+
+
+        //
+
+        errorD = error;
+        lldSetPowerMotor(CLIP_VALUE(PDR,0,100));
+        chprintf(((BaseSequentialStream *)&SD7), "|%d    ",value);
+        chprintf(((BaseSequentialStream *)&SD7), "|%d   ",error);
+        chprintf(((BaseSequentialStream *)&SD7), "|%d   ",error-errorD);
+        chprintf(((BaseSequentialStream *)&SD7), "|%d   ",P);
+        chprintf(((BaseSequentialStream *)&SD7), "|%d   ",D);
+        chprintf(((BaseSequentialStream *)&SD7), "|%d   ",kva);
+        chprintf(((BaseSequentialStream *)&SD7), "|%d\r\n",PDR);
+        chThdSleepMilliseconds(100);
+    }
+    lldSetPowerMotor(0);
+}
+
+void lldTurnForCertainDegreeLeft(int16_t degrees)
+{
+    uint16_t temp_value = value;
+    int16_t error = 61;
+    int32_t P = 0;
+    int16_t errorD = 0;
+    int32_t PDR = 0;
+    int32_t D = 0;
+    int32_t I = 0;
+    int kva = 0;
+    uint16_t turn_untill = temp_value - 16.94*degrees;
+    turn_untill = CLIP_VALUE(turn_untill,TURN_MIN,temp_value);
+//    chprintf(((BaseSequentialStream *)&SD7), "%d    ",temp_value);
+//    chprintf(((BaseSequentialStream *)&SD7), "%d\r\n",turn_untill);
+    while (error > 60)
+    {
+        error = value - turn_untill;
+        P = CLIP_VALUE(error*kp,0,100);
+
+        D = (error-errorD)*kd;
+        PDR = P+D;
+
+        errorD = error;
+
+        //I part
+
+        I += error;
+        PDR = PDR+I*ki;
+        kva = I*ki;
+
+
+        //
+
+
+        lldSetPowerMotor(-CLIP_VALUE(PDR,0,100));
+        chprintf(((BaseSequentialStream *)&SD7), "i%d    ",value);
+        chprintf(((BaseSequentialStream *)&SD7), "i%d   ",error);
+        chprintf(((BaseSequentialStream *)&SD7), "i%d   ",error-errorD);
+        chprintf(((BaseSequentialStream *)&SD7), "i%d   ",P);
+        chprintf(((BaseSequentialStream *)&SD7), "i%d   ",D);
+        chprintf(((BaseSequentialStream *)&SD7), "|%d   ",kva);
+        chprintf(((BaseSequentialStream *)&SD7), "i%d\r\n",PDR);
+        chThdSleepMilliseconds(100);
+    }
+    lldSetPowerMotor(0);
+}
+
+void init(void)
+{
+    chSysInit();    //#
+        halInit(); //#
+
+        lldMotorInit();
+
+        sdStart(&SD7,&letsgo);
+
+        palSetPadMode(GPIOE,8,PAL_MODE_ALTERNATE(8));
+        palSetPadMode(GPIOE,7,PAL_MODE_ALTERNATE(8));
+
+
+        gptStart(&GPTD4, &gpt4cfg1);
+        adcStart(&ADCD1, NULL);
+
+        palSetLineMode(LINE_ADC123_IN10, PAL_MODE_INPUT_ANALOG);
+
+        adcStartConversion(&ADCD1, &adcgrpcfg1, samples1, ADC1_BUF_DEPTH);
+        gptStartContinuous(&GPTD4,gpt4cfg1.frequency/1000);
+}
+
+int main(void)
+{
+    init();
+    chThdSleepMilliseconds(1000);
+
+    while ( 1 )
+    {
+
+//        while(i<101)
+//        {
+//            lldSetPowerMotor(i);
+//            i++;
+//            chThdSleepMilliseconds(100);
+//            //pwmStart( PWMDriver1, &pwm1conf );
+//        }
+//        i=-100;
+
+//        chprintf(((BaseSequentialStream *)&SD7), "%d    ",test);
+//            chprintf(((BaseSequentialStream *)&SD7), "%d\r\n",value);
+        lldTurnForCertainDegreeRight(45);
+                    chThdSleepMilliseconds(500);
+                    lldTurnForCertainDegreeLeft(45);
+            chThdSleepMilliseconds(500);
+            chprintf(((BaseSequentialStream *)&SD7), "\n\n\rlalka\n\n\r");
+//            pwmStop(&PWMD1);
+//            chThdSleepMilliseconds(1000);
+
+    }
+}
